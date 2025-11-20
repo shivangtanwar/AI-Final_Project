@@ -1,0 +1,28 @@
+# Trae IDE and workspace
+.trae/
+
+# Python caches and artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+.env
+
+# Node/Frontend common
+node_modules/
+.DS_Store
+
+# Logs and temp
+*.log
+tmp/
+.cache/
+
+# OS/editor
+.vscode/
+.idea/

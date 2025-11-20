@@ -1,0 +1,482 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI Study Planner</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body { font-family: system-ui, sans-serif; margin: 0; background: #0b1020; color: #e6edf3; }
+      header { display:flex; gap:12px; align-items:center; padding: 12px 16px; position: sticky; top:0; background:#0d1325; border-bottom: 1px solid #223; z-index: 10; }
+      main { display: grid; grid-template-columns: 280px 1fr 320px; gap: 12px; padding: 12px; }
+      .card { background:#0f162c; border: 1px solid #223; border-radius: 8px; padding: 12px; }
+      .grid-wrap { overflow-x: auto; overflow-y: hidden; }
+      .grid { display: grid; grid-template-columns: repeat(var(--cols), minmax(clamp(110px, 12vw, 160px), 1fr)); gap: 8px; min-width: 0; }
+      .cell { border: 1px solid #334; min-height: 64px; padding: 8px; font-size: 12px; border-radius: 8px; background:#111a33; position: relative; }
+      .cell.dragging { opacity: .6; }
+      .meta { position:absolute; bottom:6px; right:6px; font-size:10px; opacity:.7 }
+      .cell:hover { outline: 2px solid #4aa; }
+      .blocked { background: #3a1f1f; border-color:#703; }
+      .math { background:#113b5a; border-color:#1a5f88; }
+      .cs { background:#1b2b4a; border-color:#284b7a; }
+      .insight { font-size: 13px; line-height: 1.4; }
+      .controls label { display:flex; gap:6px; align-items:center; margin-bottom:6px; }
+      .controls input[type="range"] { width: 160px; }
+      button { background:#1a4; border: none; color:#fff; padding:8px 12px; border-radius:6px; cursor:pointer; }
+      button.secondary { background:#333a; }
+      .metric-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; margin-top: 8px; }
+      .metric-card { background:#0f1830; border:1px solid #223; border-radius:8px; padding:10px; }
+      .metric-title { font-size:12px; opacity:.8; }
+      .metric-value { font-size:18px; font-weight:600; }
+      .metric-badges { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
+      .metric-badge { background:#122042; border:1px solid #244; color:#cde; padding:4px 8px; border-radius:999px; font-size:11px; }
+      .metrics-table { width:100%; border-collapse:collapse; margin-top:10px; font-size:12px; }
+      .metrics-table th, .metrics-table td { border:1px solid #233; padding:6px; text-align:center; }
+      .explain { margin-top:10px; display:grid; grid-template-columns: 1fr; gap:8px; }
+      .explain .line { font-size:12px; opacity:.9; }
+      @media (max-width: 900px) { main { grid-template-columns: 1fr; } .grid { min-width: 480px; } }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>AI Study Planner</strong>
+      <label>Days <input id="days" type="number" min="1" value="2" /></label>
+      <label>Slots/day <input id="slots" type="number" min="1" value="6" /></label>
+      <button id="seed">Seed Demo Data</button>
+      <button id="opt">Optimize</button>
+    </header>
+    <main>
+      <section class="card controls">
+        <h3>Weights</h3>
+        <label>Energy <input id="w_energy" type="range" min="0" max="3" step="0.1" value="1" /></label>
+        <label>Fatigue <input id="w_fatigue" type="range" min="0" max="5" step="0.1" value="2" /></label>
+        <label>Deadline <input id="w_deadline" type="range" min="0" max="2" step="0.1" value="0.5" /></label>
+        <label>Break Penalty <input id="w_break" type="range" min="0" max="100" step="5" value="50" /></label>
+        <div style="margin-top:8px"><button class="secondary" id="rerun">Re-optimize</button></div>
+        <div id="status" style="margin-top:8px"></div>
+        <h3 style="margin-top:12px">Add Subject</h3>
+        <label>Id <input id="sub_id" /></label>
+        <label>Name <input id="sub_name" /></label>
+        <label>Difficulty <input id="sub_diff" type="number" min="1" max="5" value="3" /></label>
+        <label>Focus Demand <input id="sub_focus" type="number" min="1" max="5" value="3" /></label>
+        <button id="add_subject">Add Subject</button>
+        <div id="subjects_list" style="margin-top:8px; font-size:12px; opacity:.9"></div>
+        <h3 style="margin-top:12px">Add Task</h3>
+        <label>Title <input id="task_title" /></label>
+        <label>Subject <select id="task_subject_select"></select></label>
+        <label>Duration (mins) <input id="task_dur" type="number" min="30" step="30" value="60" /></label>
+        <label>Deadline Days <input id="task_deadline" type="number" min="0" value="5" /></label>
+        <label>Difficulty <input id="task_diff" type="number" min="1" max="5" value="3" /></label>
+        <button id="add_task">Add Task</button>
+        <div id="tasks_list" style="margin-top:8px; font-size:12px; opacity:.9"></div>
+        <h3 style="margin-top:12px">Locks</h3>
+        <div style="display:flex; gap:6px; align-items:center; margin-bottom:6px">
+          <button id="lock_sel">Lock Selected</button>
+          <button class="secondary" id="unlock_sel">Unlock Selected</button>
+          <button class="secondary" id="clear_locks">Clear Locks</button>
+          <span id="locks_count" style="margin-left:auto; font-size:12px; opacity:.8">0 locks</span>
+        </div>
+      </section>
+      <section class="card grid-wrap">
+        <div id="grid" class="grid"></div>
+        <canvas id="fitness" width="800" height="180" style="margin-top:12px; width: 100%; max-width: 100%"></canvas>
+        <div id="metrics" style="margin-top:12px; font-size:12px; opacity:.9"></div>
+      </section>
+      <section class="card insight">
+        <h3>AI Insights</h3>
+        <div id="insight">Click a block to see rationale.</div>
+        <div id="gen_log" style="margin-top:12px; font-size:12px; opacity:.9"></div>
+      </section>
+    </main>
+    <script>
+      const api = async (p, m='GET', body) => {
+        const r = await fetch('/api'+p, {method:m, headers:{'Content-Type':'application/json'}, body: body?JSON.stringify(body):undefined})
+        if(!r.ok){
+          const txt = await r.text().catch(()=> '')
+          throw new Error(`API ${m} ${p} failed: ${r.status} ${txt}`)
+        }
+        return r.json()
+      }
+      const status = (t)=>document.getElementById('status').textContent=t
+      let locks = []
+      let selected = null
+      let optimizingCount = 0
+      const CACHE_KEY = 'studyPlanner.v1'
+      const getCache = ()=>{ try{ const r = localStorage.getItem(CACHE_KEY); return r?JSON.parse(r):null }catch{ return null } }
+      const saveCache = (partial)=>{ const cur = getCache()||{}; const upd = Object.assign({}, cur, partial||{}); try{ localStorage.setItem(CACHE_KEY, JSON.stringify(upd)) }catch{} }
+      async function restoreFromCache(){
+        const c = getCache(); if(!c) return;
+        if(c.days) document.getElementById('days').value = c.days
+        if(c.slots_per_day) document.getElementById('slots').value = c.slots_per_day
+        if(c.w_energy!=null) document.getElementById('w_energy').value = c.w_energy
+        if(c.w_fatigue!=null) document.getElementById('w_fatigue').value = c.w_fatigue
+        if(c.w_deadline!=null) document.getElementById('w_deadline').value = c.w_deadline
+        if(c.w_break_penalty!=null) document.getElementById('w_break').value = c.w_break_penalty
+        if(Array.isArray(c.locks)) { locks = c.locks; document.getElementById('locks_count').textContent = `${locks.length} locks` }
+        try{
+          const subs = await api('/subjects')
+          const ts = await api('/tasks')
+          let updated = false
+          if((subs||[]).length===0 && Array.isArray(c.subjects)){
+            for(const s of c.subjects){ await api('/subjects','POST', s) }
+            updated = true
+          }
+          if((ts||[]).length===0 && Array.isArray(c.tasks)){
+            for(const t of c.tasks){ await api('/tasks','POST', t) }
+            updated = true
+          }
+          if(c.profile){ await api('/profile','POST', c.profile) }
+          // Always refresh UI lists and dropdowns regardless of updates
+          await refreshSubjects();
+          await refreshTasks();
+          // Save the latest server state into cache for stability
+          saveCache({subjects: subs, tasks: ts})
+        }catch{}
+        if(c.schedule){
+          const prof = c.profile || await api('/profile').catch(()=>null)
+          draw(c.schedule, prof||{blocked:[], energy_curve:[]})
+          drawFitness(c.history||[])
+          drawMetrics(c.metrics||{})
+        }
+      }
+      const draw = (sched, profile) => {
+        const grid = document.getElementById('grid');
+        grid.style.setProperty('--cols', sched.slots_per_day);
+        grid.innerHTML = '';
+        for(let d=0; d<sched.days; d++){
+          for(let s=0; s<sched.slots_per_day; s++){
+            const div = document.createElement('div');
+            div.className = 'cell';
+            div.dataset.day = d
+            div.dataset.slot = s
+            div.draggable = true
+            const blocked = profile.blocked?.some(b=>b.day_index===d && b.start_slot<=s && s<b.end_slot);
+            if(blocked) div.classList.add('blocked');
+            const block = sched.grid[d][s];
+            if(block){
+              div.textContent = `${block.subject_id||''} ${block.task_id||''}`;
+              const idx = d * sched.slots_per_day + s
+              const energy = (profile.energy_curve && idx>=0 && idx<profile.energy_curve.length) ? profile.energy_curve[idx] : 3
+              const subs = window.__subjects_cache || []
+              const sub = subs.find(x=>x.id===block.subject_id)
+              const demand = sub ? sub.focus_demand : 3
+              const fatigue = Math.min(1, Math.max(0, ((s-4)/2)) * Math.max(0, ((sub?sub.difficulty:3)-3)/2))
+              const meta = document.createElement('div')
+              meta.className = 'meta'
+              meta.textContent = `E${energy}/D${demand} F${fatigue.toFixed(2)}`
+              div.appendChild(meta)
+              if(block.subject_id) div.classList.add(block.subject_id);
+              div.onclick = ()=>{
+                const idx = d * sched.slots_per_day + s
+                const energy = (profile.energy_curve && idx>=0 && idx<profile.energy_curve.length) ? profile.energy_curve[idx] : 3
+                const subs = window.__subjects_cache || []
+                const sub = subs.find(x=>x.id===block.subject_id)
+                const demand = sub ? sub.focus_demand : 3
+                const fatigue = Math.min(1, Math.max(0, ((s-4)/2)) * Math.max(0, ((sub?sub.difficulty:3)-3)/2))
+                const msg = `Scheduled ${block.task_id||''} for ${block.subject_id||''} on Day ${d+1}, Slot ${s+1}. Energy ${energy}, demand ${demand}, fatigue ${fatigue.toFixed(2)}.`
+                document.getElementById('insight').textContent = msg
+                selected = {day:d, slot:s, block}
+              }
+              div.ondragstart = (ev)=>{
+                ev.dataTransfer.setData('text/plain', JSON.stringify({day:d, slot:s, block}))
+                div.classList.add('dragging')
+              }
+              div.ondragend = ()=>{ div.classList.remove('dragging') }
+            }
+            // highlight locked cells
+            if(locks.some(lk=>lk.day===d && lk.slot===s)){
+              div.style.outline = '2px solid #5ad'
+            }
+            div.ondragover = (ev)=>{ ev.preventDefault() }
+            div.ondrop = async (ev)=>{
+              ev.preventDefault()
+              try{
+                const data = JSON.parse(ev.dataTransfer.getData('text/plain'))
+                const src = {day:data.day, slot:data.slot}
+                const dst = {day:d, slot:s}
+                const lk = {day:dst.day, slot:dst.slot, task_id:data.block?.task_id, subject_id:data.block?.subject_id, difficulty:data.block?.difficulty||1}
+                // add lock at destination
+                if(!locks.some(x=>x.day===lk.day && x.slot===lk.slot)) locks.push(lk)
+                // mark source as break lock to free it
+                if(!locks.some(x=>x.day===src.day && x.slot===src.slot)) locks.push({day:src.day, slot:src.slot, type:'break'})
+                document.getElementById('locks_count').textContent = `${locks.length} locks`
+                saveCache({locks})
+                await optimize()
+              }catch(e){ status(String(e.message||e)) }
+            }
+            grid.appendChild(div);
+          }
+        }
+      }
+      document.getElementById('seed').onclick = async () => {
+        try{
+          status('Seeding...');
+          const energy = [3,4,5,4,3,2,  2,3,4,3,2,1];
+          await api('/subjects','POST',{id:'math', name:'Math', difficulty:5, focus_demand:5});
+          await api('/subjects','POST',{id:'cs', name:'CS', difficulty:3, focus_demand:3});
+          await api('/tasks','POST',{id:'t1', title:'Calculus', subject_id:'math', duration_minutes:120, deadline:null, difficulty:5});
+          await api('/tasks','POST',{id:'t2', title:'Algorithms', subject_id:'cs', duration_minutes:60, deadline:null, difficulty:3});
+          await api('/profile','POST',{id:'u1', energy_curve: energy, blocked:[{day_index:0,start_slot:5,end_slot:6}]});
+          status('Seeded demo data');
+          await refreshSubjects();
+          await refreshTasks();
+          saveCache({subjects: window.__subjects_cache||[], tasks: await api('/tasks'), profile: {id:'u1', energy_curve: energy, blocked:[{day_index:0,start_slot:5,end_slot:6}]}})
+        }catch(e){ status(String(e.message||e)) }
+      }
+      async function optimize(){
+        optimizingCount++;
+        status('Optimizing...');
+        let ok = false;
+        const days = parseInt(document.getElementById('days').value,10);
+        const slots = parseInt(document.getElementById('slots').value,10);
+        const w_energy = parseFloat(document.getElementById('w_energy').value);
+        const w_fatigue = parseFloat(document.getElementById('w_fatigue').value);
+        const w_deadline = parseFloat(document.getElementById('w_deadline').value);
+        const w_break_penalty = parseFloat(document.getElementById('w_break').value);
+        try{
+          try{
+            await api('/profile')
+          }catch(e){
+            await restoreFromCache();
+            try{
+              await api('/profile')
+            }catch(e2){
+              const energy = Array.from({length: days*slots}, ()=>3)
+              await api('/profile','POST',{id:'u1', energy_curve: energy, blocked: []})
+            }
+          }
+          const sched = await api('/optimize','POST',{days, slots_per_day:slots, generations:30, seed:123, w_energy, w_fatigue, w_deadline, w_break_penalty, history:true, locks});
+          if(!sched || !sched.grid){ status('Optimization failed: empty schedule'); return }
+          const profile = await api('/profile');
+          draw(sched, profile);
+          drawFitness(sched.history||[]);
+          try{ drawMetrics(sched.metrics||{}) }catch(e){ /* guard UI */ }
+          saveCache({schedule: sched, history: sched.history||[], metrics: sched.metrics||{}, profile, days, slots_per_day: slots, w_energy, w_fatigue, w_deadline, w_break_penalty, locks})
+          ok = true;
+        }catch(err){
+          status(`Optimization failed: ${err && err.message ? err.message : err}`)
+        } finally {
+          optimizingCount = Math.max(0, optimizingCount-1);
+          if(ok && optimizingCount === 0) status('Optimization complete');
+        }
+      }
+      document.getElementById('opt').onclick = ()=>{ optimize() }
+      document.getElementById('rerun').onclick = ()=>{ optimize() }
+      document.getElementById('add_subject').onclick = async () => {
+        try{
+          const id = document.getElementById('sub_id').value.trim()
+          const name = document.getElementById('sub_name').value.trim()
+          const difficulty = parseInt(document.getElementById('sub_diff').value,10)
+          const focus_demand = parseInt(document.getElementById('sub_focus').value,10)
+          if(!id || !name){ status('Subject id and name are required'); return }
+          const s = {id, name, difficulty, focus_demand}
+          await api('/subjects','POST', s)
+          status(`Added subject ${id}`)
+          await refreshSubjects();
+          saveCache({subjects: window.__subjects_cache||[]})
+        }catch(e){ status(String(e.message||e)) }
+      }
+      document.getElementById('add_task').onclick = async () => {
+        try{
+          const title = document.getElementById('task_title').value.trim()
+          const sel = document.getElementById('task_subject_select')
+          const subject_id = sel && sel.value ? sel.value : ''
+          const duration_minutes = parseInt(document.getElementById('task_dur').value,10)
+          const deadline_days = parseInt(document.getElementById('task_deadline').value,10)
+          const difficulty = parseInt(document.getElementById('task_diff').value,10)
+          if(!title || !subject_id){ status('Task title and subject are required'); return }
+          const t = {title, subject_id, duration_minutes, deadline_days, difficulty}
+          await api('/tasks','POST', t)
+          status(`Added task ${title}`)
+          await refreshTasks();
+          const ts = await api('/tasks')
+          saveCache({tasks: ts})
+        }catch(e){ status(String(e.message||e)) }
+      }
+      async function refreshSubjects(){
+        try{
+          const subs = await api('/subjects')
+          const el = document.getElementById('subjects_list')
+          el.textContent = subs.map(s=>`${s.id}:${s.name}(d${s.difficulty}/f${s.focus_demand})`).join(', ')
+          window.__subjects_cache = subs
+          const sel = document.getElementById('task_subject_select')
+          sel.innerHTML = ''
+          subs.forEach(s=>{
+            const opt = document.createElement('option')
+            opt.value = s.id
+            opt.textContent = `${s.name} (${s.id})`
+          sel.appendChild(opt)
+          })
+          saveCache({subjects: subs})
+        }catch(e){ /* ignore */ }
+      }
+      async function refreshTasks(){
+        try{
+          const ts = await api('/tasks')
+          const el = document.getElementById('tasks_list')
+          el.textContent = ts.map(t=>`${t.id}:${t.title}[${t.subject_id}](${t.duration_minutes}m)`).join(', ')
+          saveCache({tasks: ts})
+        }catch(e){ /* ignore */ }
+      }
+      document.getElementById('lock_sel').onclick = async () => {
+        if(!selected) return;
+        const lk = {day:selected.day, slot:selected.slot, task_id:selected.block?.task_id, subject_id:selected.block?.subject_id, difficulty:selected.block?.difficulty||1}
+        if(!locks.some(x=>x.day===lk.day && x.slot===lk.slot)) locks.push(lk)
+        document.getElementById('locks_count').textContent = `${locks.length} locks`
+        saveCache({locks})
+        await optimize()
+      }
+      document.getElementById('clear_locks').onclick = () => {
+        locks = []
+        document.getElementById('locks_count').textContent = `0 locks`
+        saveCache({locks})
+      }
+      document.getElementById('unlock_sel').onclick = async () => {
+        if(!selected){ status('Select a cell to unlock'); return }
+        const idx = locks.findIndex(x=>x.day===selected.day && x.slot===selected.slot)
+        if(idx>=0){
+          locks.splice(idx,1)
+          document.getElementById('locks_count').textContent = `${locks.length} locks`
+          saveCache({locks})
+          await optimize()
+        } else {
+          status('No lock at selected cell')
+        }
+      }
+      // Double-click to toggle a break lock on any cell (empty or occupied)
+      document.getElementById('grid').addEventListener('dblclick', async (ev)=>{
+        const el = (ev.target instanceof HTMLElement) ? ev.target.closest('.cell') : null
+        if(!el) return
+        const d = parseInt(el.dataset.day,10)
+        const s = parseInt(el.dataset.slot,10)
+        const idx = locks.findIndex(x=>x.day===d && x.slot===s && (x.type==='break' || (!x.task_id && !x.subject_id)))
+        if(idx >= 0){
+          locks.splice(idx,1)
+        } else {
+          locks.push({day:d, slot:s, type:'break'})
+        }
+        document.getElementById('locks_count').textContent = `${locks.length} locks`
+        saveCache({locks})
+        await optimize()
+      })
+      function drawFitness(hist){
+        const c = document.getElementById('fitness');
+        const ctx = c.getContext('2d');
+        ctx.clearRect(0,0,c.width,c.height);
+        if(!hist || hist.length===0){ return; }
+        window.__fitness_history = hist
+        const max = Math.max(...hist);
+        const min = Math.min(...hist);
+        const pad = 10;
+        ctx.strokeStyle = '#5ad';
+        ctx.beginPath();
+        for(let i=0;i<hist.length;i++){
+          const x = pad + i*( (c.width-2*pad)/(hist.length-1) );
+          const y = c.height - pad - ((hist[i]-min)/(max-min||1))*(c.height-2*pad);
+          if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+        }
+        ctx.stroke();
+        ctx.fillStyle = '#aaa';
+        ctx.fillText('Fitness over generations', pad, 12);
+        const gl = document.getElementById('gen_log')
+        const last = hist[hist.length-1]
+        const prev = hist[hist.length-2] ?? last
+        const delta = last - prev
+        const recent = hist.slice(Math.max(0, hist.length-5))
+        const avgDelta = recent.length>1 ? (recent[recent.length-1]-recent[0])/(recent.length-1) : 0
+        const conv = Math.abs(avgDelta) < 0.01 ? 'Converged' : 'Improving'
+        gl.textContent = `Generations ${hist.length}, best ${last.toFixed(2)}, last Δ ${delta.toFixed(2)} (${conv})`
+      }
+
+      function drawMetrics(metrics){
+        const m = document.getElementById('metrics')
+        m.innerHTML = ''
+        try{
+          if(!metrics || !metrics.overall){ return }
+          const o = metrics.overall
+          const grid = document.createElement('div')
+          grid.className = 'metric-grid'
+          const kpis = [
+            {t:'Score', v:o.score!=null?Number(o.score).toFixed(2):'-'},
+            {t:'Soft', v:o.soft!=null?Number(o.soft).toFixed(2):'-'},
+            {t:'Hard', v:o.hard!=null?Number(o.hard).toFixed(2):'-'},
+            {t:'Utilization', v:o.utilization!=null?`${Math.round(o.utilization*100)}%`:'-'},
+            {t:'Conflicts', v:o.blocked_conflicts??'-'},
+            {t:'Breaks', v:o.break_violations??'-'},
+          ]
+          kpis.forEach(k=>{
+            const card = document.createElement('div')
+            card.className = 'metric-card'
+            const tt = document.createElement('div')
+            tt.className = 'metric-title'
+            tt.textContent = k.t
+            const vv = document.createElement('div')
+            vv.className = 'metric-value'
+            vv.textContent = String(k.v)
+            card.appendChild(tt); card.appendChild(vv)
+            grid.appendChild(card)
+          })
+          m.appendChild(grid)
+          const badgesWrap = document.createElement('div')
+          badgesWrap.className = 'metric-badges'
+          const subjectsArr = Array.isArray(metrics.subjects) ? metrics.subjects : []
+          subjectsArr.forEach(s=>{
+            const b = document.createElement('div')
+            b.className = 'metric-badge'
+            b.textContent = `${s.subject_id}: ${s.slots} slots`
+            badgesWrap.appendChild(b)
+          })
+          m.appendChild(badgesWrap)
+          const tbl = document.createElement('table')
+          tbl.className = 'metrics-table'
+          const thead = document.createElement('thead')
+          const trh = document.createElement('tr')
+          ;['Day','Used','Soft','Breaks'].forEach(h=>{ const th=document.createElement('th'); th.textContent=h; trh.appendChild(th) })
+          thead.appendChild(trh); tbl.appendChild(thead)
+          const tbody = document.createElement('tbody')
+          const perDayArr = Array.isArray(metrics.per_day) ? metrics.per_day : []
+          perDayArr.forEach(d=>{
+            const tr=document.createElement('tr')
+            const cells=[`D${(d.day??0)+1}`, d.used_slots??0, (d.soft!=null?Number(d.soft).toFixed(2):'-'), d.break_violations??0]
+            cells.forEach(c=>{ const td=document.createElement('td'); td.textContent=String(c); tr.appendChild(td) })
+            tbody.appendChild(tr)
+          })
+        tbl.appendChild(tbody)
+        m.appendChild(tbl)
+        const exp = document.createElement('div')
+        exp.className = 'metric-card explain'
+        const slotsArr = Array.isArray(metrics.slots) ? metrics.slots : []
+        let energySum = 0, fatigueSum = 0, deadlineSum = 0
+        for(const day of slotsArr){
+          if(Array.isArray(day)){
+            for(const cell of day){
+              energySum += Number(cell && cell.energy_contrib ? cell.energy_contrib : 0)
+              fatigueSum += Number(cell && cell.fatigue ? cell.fatigue : 0)
+              deadlineSum += Number(cell && cell.deadline_bonus ? cell.deadline_bonus : 0)
+            }
+          }
+        }
+        const brkWeightEl = document.getElementById('w_break')
+        const brkWeight = brkWeightEl ? parseFloat(brkWeightEl.value) : 50
+        const blockedPen = Number(o.blocked_conflicts||0) * 100
+        const breaksPen = Number(o.break_violations||0) * brkWeight
+        const softExpl = `Soft = energy ${energySum.toFixed(2)} + deadline ${deadlineSum.toFixed(2)} - fatigue ${fatigueSum.toFixed(2)} = ${(energySum + deadlineSum - fatigueSum).toFixed(2)}`
+        const hardExpl = `Hard = blocked ${o.blocked_conflicts||0}×100 (${blockedPen.toFixed(2)}) + breaks ${o.break_violations||0}×${brkWeight} (${breaksPen.toFixed(2)}) = ${(blockedPen + breaksPen).toFixed(2)}`
+        const scoreExpl = `Score = Soft - Hard = ${((energySum + deadlineSum - fatigueSum) - (blockedPen + breaksPen)).toFixed(2)} (reported ${o.score!=null?Number(o.score).toFixed(2):'-'})`
+        const l1 = document.createElement('div'); l1.className = 'line'; l1.textContent = softExpl
+        const l2 = document.createElement('div'); l2.className = 'line'; l2.textContent = hardExpl
+        const l3 = document.createElement('div'); l3.className = 'line'; l3.textContent = scoreExpl
+        exp.appendChild(l1); exp.appendChild(l2); exp.appendChild(l3)
+        m.appendChild(exp)
+        }catch(e){ m.textContent = 'Metrics unavailable' }
+      }
+      document.getElementById('days').oninput = ()=> saveCache({days: parseInt(document.getElementById('days').value,10)})
+      document.getElementById('slots').oninput = ()=> saveCache({slots_per_day: parseInt(document.getElementById('slots').value,10)})
+      document.getElementById('w_energy').oninput = ()=> saveCache({w_energy: parseFloat(document.getElementById('w_energy').value)})
+      document.getElementById('w_fatigue').oninput = ()=> saveCache({w_fatigue: parseFloat(document.getElementById('w_fatigue').value)})
+      document.getElementById('w_deadline').oninput = ()=> saveCache({w_deadline: parseFloat(document.getElementById('w_deadline').value)})
+      document.getElementById('w_break').oninput = ()=> saveCache({w_break_penalty: parseFloat(document.getElementById('w_break').value)})
+      restoreFromCache()
+    </script>
+  </body>
+  </html>
